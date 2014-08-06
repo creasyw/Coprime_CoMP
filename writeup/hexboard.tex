@@ -1,0 +1,309 @@
+%\documentclass{article}
+\documentclass[border=1cm]{standalone}
+%\usepackage[margin=0.5in]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usetikzlibrary{shapes}
+
+\makeatletter
+
+\newlength{\hexagon@base@length}
+\newlength{\x@base@length}
+\newlength{\y@base@length}
+\setlength{\hexagon@base@length}{0.5cm}
+\setlength{\x@base@length}{\hexagon@base@length}
+\setlength{\y@base@length}{\dimexpr2\hexagon@base@length\relax}
+%% macro to set the dimensions for each hexagon, use this to change
+%% the size of the hex-board
+\def\sethexboardbaselength#1{%%
+  \setlength{\hexagon@base@length}{\dimexpr#1\relax}
+  \setlength{\x@base@length}{\hexagon@base@length}
+  \setlength{\y@base@length}{\dimexpr2\hexagon@base@length\relax}
+}
+%% styles for the hexboard
+\tikzset{
+    my hexagonal node/.style={ 
+      shape=regular polygon,
+      regular polygon sides=6,
+      minimum size=\y@base@length/sin(60),
+      draw,
+      inner sep=0,
+      anchor=south,
+      %%fill=#1,
+      rotate=210,%%so ".corner 1" is at bottom of hexa shape
+    },
+  set hex board dimensions/.style={x=\x@base@length, y=\y@base@length*sin(60)},
+  my hex path/.style={line width=3pt,line cap=round,blue},
+}
+
+
+%% some booleans to help keep track of where we are on the board
+%% as we're drawing border.                                     
+\newif\if@in@top@of@hex@board
+\newif\if@at@hex@board@equator
+\newif\if@at@row@initial@position
+
+%% Since each row of the Hex Board is passed through      
+%% a \foreach loop, it is safe to assume that there are   
+%% no commas in a given row of the table.  So first time  
+%% this macro is called, it should be called with trailing
+%% commas.  We then know we're done with the current row  
+%% once we've come across those commas.                   
+\def\graph@current@row@of@hexagon#1#2#3\@nil{%%
+  \@create@new@hexagon@cell{#1}
+  \@build@borders@between@neighbors{#1}%%
+  \@at@row@initial@positionfalse
+  %% recursively call this macro if there are still elements left for the row
+  \if,#2\relax
+  \else
+    \xdef\@cur@h@pos{\number\numexpr\@cur@h@pos+2\relax}
+    \graph@current@row@of@hexagon#2#3\@nil
+  \fi
+}
+
+%% Define a node for the current hex board cell                               
+%% Each hex-cell on the board is given a node named as as                              
+%%    H<current row>;<current horizontal position>                            
+\def\@create@new@hexagon@cell#1{%%                                            
+  %% define a node for the current position                                   
+  %% Next three lines are just "fluff" to make "x" cells stand out.           
+  \if#1x
+    \node[my hexagonal node,fill=red!20] at (\@cur@h@pos,-\@cur@row) {};
+  \fi
+  %% (1) define a macro to hold the name of the "current" cell                
+  %% (2) create the hexagonal cell for "current" cell                         
+  %% (3) define a macro with which to "remember" cell content                 
+  %% (4) define an easily called macro for "current" cell content.            
+  \edef\ae@node@name{H\@cur@row;\@cur@h@pos}
+  \node[my hexagonal node,label=center:#1] ({\ae@node@name}) at (\@cur@h@pos,-\@cur@row) {};
+  \expandafter\xdef\csname ae@node\ae@node@name\endcsname{#1}
+  \edef\ae@tmp@c{\csname ae@node\ae@node@name\endcsname}
+  %% \typeout{NODE:={H\@cur@row;\@cur@h@pos}}
+  %% collect names of macros used to store cell content info for 
+  %% removal once the board has been completed.
+  \ifx\relax\ae@garbage@
+    \xdef\ae@garbage@{\ae@node@name}%%
+  \else
+    \xdef\ae@garbage@{\ae@garbage@,\ae@node@name}%%
+  \fi
+}
+
+%% #1 = row                                                                                     
+%% #2 = horizontal position within current row                                                  
+%% #3 = name of cell we're loooking at: w=west, nw=north west, ne=north east                    
+%% #4 = value to assume if@at@hex@board@equator:  ie, at border between TOP and BOTTOM of board 
+%% #5 = value to assume if@in@top@of@hex@board AND in top half of board                         
+%% #6 = value to assume if in BOTTOM                                                            
+\def\@examine@adjacent@cell#1#2#3#4#5#6{%%                                                      
+  \edef\@@ae@tmp@name{ae@nodeH\number\numexpr#1\relax;\number\numexpr#2\relax}
+  \ifcsname\@@ae@tmp@name \endcsname
+    \edef\@@ae@tmp@csname{\expandafter\csname\@@ae@tmp@name\endcsname}
+  \else
+    \if@at@hex@board@equator
+      \edef\@@ae@tmp@csname{#4}%%
+    \else
+      \if@in@top@of@hex@board
+        \edef\@@ae@tmp@csname{#5}%%
+      \else
+        \edef\@@ae@tmp@csname{#6}%%
+      \fi
+    \fi
+  \fi
+  \expandafter\edef\csname ae@tmp@#3\endcsname{\@@ae@tmp@csname}
+  %% \typeout{ ___#4___ --> \csname ae@tmp@#4\endcsname\space <=> \ae@tmp@c}
+}
+
+%% This next macro examines the contents of the cells to the WEST, NORTH WEST, and NORTH EAST 
+%% If the contents of those cells differ from the content of the "current" cell, draw a       
+%% border between them.z                                                                      
+%% Special conditions hold on the border of the board.  If there is no cell bordering a       
+%% particular side of the "current" cell, then I make various assumptions which are handled   
+%% by the macro \@examine@adjacent@cell:                                                      
+%%   * on the board's north west side, non-existent cells are assumed to have content of "o"  
+%%   * on the board's north east side, non-existent cells are assumed to have content of "x"  
+%%   * on the board's south west side, non-existent cells are assumed to have content of "x"  
+%%   * on the board's south east side, non-existent cells are assumed to have content of "o"  
+%% The macro \@build@borders@for@last@row@entry handles similar cases for the last cell of    
+%% each row.                                                                                  
+\def\@build@borders@between@neighbors#1{%%                                                    
+  %% (1) check to the "WEST"                                                                  
+  %% (2) check to the "NORTH WEST"                                                            
+  %% (3) check to the "NORTH EAST"                                                            
+  \@examine@adjacent@cell{\@cur@row}{\@cur@h@pos-2}{w}{o}{o}{o}
+  \@examine@adjacent@cell{\@cur@row-1}{\@cur@h@pos-1}{nw}{o}{o}{o}
+  \@examine@adjacent@cell{\@cur@row-1}{\@cur@h@pos+1}{ne}{o}{o}{o}
+
+  \@examine@adjacent@cell{\@cur@row}{\@cur@h@pos+4}{east}{o}{o}{o}
+  \@examine@adjacent@cell{\@cur@row-2}{\@cur@h@pos-2}{nnw}{o}{o}{o}
+  \@examine@adjacent@cell{\@cur@row-2}{\@cur@h@pos+2}{nne}{o}{o}{o}
+  %% draw borders
+%  \if x\ae@tmp@c
+%    \if o\ae@tmp@w
+%      \draw[my hex path] (\ae@node@name.corner 6) -- (\ae@node@name.corner 5);
+%    \fi
+%    \if o\ae@tmp@nw
+%      \draw[my hex path] (\ae@node@name.corner 5) -- (\ae@node@name.corner 4);
+%    \fi
+%    \if o\ae@tmp@ne
+%      \draw[my hex path] (\ae@node@name.corner 4) -- (\ae@node@name.corner 3);
+%    \fi
+%  \fi
+  \if o\ae@tmp@c
+    \if x\ae@tmp@w
+      \if o\ae@tmp@nw
+          \if o\ae@tmp@ne
+            \draw[my hex path] (\ae@node@name.corner 4) -- (\ae@node@name.corner 3);
+            \draw[my hex path] (\ae@node@name.corner 3) -- (\ae@node@name.corner 2);
+            \draw[my hex path] (\ae@node@name.corner 2) -- (\ae@node@name.corner 1);
+          \fi
+      \fi
+    \fi
+
+    \if x\ae@tmp@nw
+      \if o\ae@tmp@w
+          \if o\ae@tmp@ne
+            \draw[my hex path] (\ae@node@name.corner 3) -- (\ae@node@name.corner 2);
+            \draw[my hex path] (\ae@node@name.corner 2) -- (\ae@node@name.corner 1);
+            \draw[my hex path] (\ae@node@name.corner 1) -- (\ae@node@name.corner 6);
+          \fi
+      \fi
+    \fi
+    % currently cannot work
+    \if x\ae@tmp@east
+      \if o\ae@tmp@w
+          \if o\ae@tmp@nw
+            \draw[my hex path] (\ae@node@name.corner 6) -- (\ae@node@name.corner 5);
+          \fi
+      \fi
+    \fi
+
+    \if o\ae@tmp@w
+      \if o\ae@tmp@nw
+          \if x\ae@tmp@ne
+            \draw[my hex path] (\ae@node@name.corner 2) -- (\ae@node@name.corner 1);
+            \draw[my hex path] (\ae@node@name.corner 1) -- (\ae@node@name.corner 6);
+          \fi
+      \fi
+    \fi
+%    \if x\ae@tmp@nw
+%      \draw[my hex path] (\ae@node@name.corner 5) -- (\ae@node@name.corner 4);
+%    \fi
+%    \if x\ae@tmp@ne
+%      \draw[my hex path] (\ae@node@name.corner 4) -- (\ae@node@name.corner 3);
+%    \fi
+    \if@at@row@initial@position
+      \if@in@top@of@hex@board
+      \else
+        \draw[my hex path] (\ae@node@name.corner 1) -- (\ae@node@name.corner 6);
+      \fi
+    \fi
+  \fi
+}
+
+
+%% Cells to the EAST and SOUTH EAST need only be examined if you are 
+%% currently in the last position of the current row.
+\def\@build@borders@for@last@row@entry{%%
+  \if x\ae@tmp@c
+    \if@in@top@of@hex@board
+    \else
+      \draw[my hex path] (\ae@node@name.corner 1) -- (\ae@node@name.corner 2);
+      \draw[my hex path] (\ae@node@name.corner 2) -- (\ae@node@name.corner 3);
+    \fi
+  \fi
+  \if o\ae@tmp@c
+    \if@in@top@of@hex@board
+      \draw[my hex path] (\ae@node@name.corner 2) -- (\ae@node@name.corner 3);
+    \fi
+  \fi
+}
+
+%% Find out how many rows there are.  There should always be  
+%% an odd number.  Add one to this number and divide by two.  
+%% This new number determines whether you're in the top or the
+%% bottom of the hex board.                                   
+\def\@determine@widest@row#1{%% 
+  \def\@width@at@hex@board@equator{0}%%
+  \foreach \x in {#1}{\xdef\@width@at@hex@board@equator{\number\numexpr\@width@at@hex@board@equator+1\relax}}%%
+  \edef\@width@at@hex@board@equator{\number\numexpr(\@width@at@hex@board@equator+1)/2\relax}
+  %%\typeout {NUMBER OF ROWS -> \@width@at@hex@board@equator}
+}
+
+\def\@init@positions{%%
+  \def\@cur@row{1}%%
+  \def\@pseudo@row{1}%%
+  \def\@cur@h@pos{0}}
+
+
+
+%% In the following macro:                                                              
+%%   @cur@row      counts the current row from 1 on up.                                 
+%%   @pseudo@row   counts the current row until @cur@row==\@width@at@hex@board@equator  
+%%                 and then starts to count down.  The value of this macro is used      
+%%                 to help determine position the first hexagon of the current row.     
+%%   @cur@h@pos    is initially set to the opposite of @pseudo@row, this value is       
+%%                 the position of the first hexagon on the "current" row.              
+\def\drawboard#1{%%
+  \let\ae@garbage@\relax
+  \@in@top@of@hex@boardtrue
+  \@at@hex@board@equatorfalse
+  \@determine@widest@row{#1}%%
+  \@init@positions
+  %%\typeout{ ============================================================ }
+  %%\typeout{ NEW BOARD = }
+  %%\typeout{ ============================================================ }
+  \begin{tikzpicture}[set hex board dimensions]
+    \foreach \hexbox in {#1}
+      {
+        \xdef\@cur@h@pos{-\@pseudo@row}
+        \@at@row@initial@positiontrue
+        \expandafter\graph@current@row@of@hexagon\hexbox,,\@nil
+        \@build@borders@for@last@row@entry
+        \global\@at@hex@board@equatorfalse
+        \xdef\@cur@row{\number\numexpr\@cur@row+1}
+        \if@in@top@of@hex@board
+          \xdef\@pseudo@row{\number\numexpr\@pseudo@row+1}
+          \ifnum\@pseudo@row=\@width@at@hex@board@equator\relax
+            \global\@at@hex@board@equatortrue
+            \global\@in@top@of@hex@boardfalse
+          \fi
+        \else
+          \xdef\@pseudo@row{\number\numexpr\@pseudo@row-1\relax}
+        \fi
+        %%\typeout{ ------------------------------------------------------------------ }
+      }
+  \ae@dump@garbage
+  \end{tikzpicture}
+}
+
+%% Remove macros storing information about contents of cells
+\def\ae@dump@garbage{%%
+  \foreach \ae@node@name in \ae@garbage@
+    {\global\expandafter\let\csname ae@node\ae@node@name\endcsname\ae@undefined@}}
+
+
+%% command to assist in drawing the path around the hexagons.
+\def\drawhexpath(#1)#2{%%
+    \let\surculus@previous\relax%%
+    \foreach \x in {#2}
+      { \ifx\relax\surculus@previous
+          \xdef\surculus@previous{\x}%%
+          %% for testing %% \node [circle,fill=red,inner sep=2pt] at (H#1.corner \x) {};
+        \else
+          \draw[my hex path]  (H#1.corner \surculus@previous) -- (H#1.corner \x);
+          \xdef\surculus@previous{\x}%%
+        \fi
+    }}
+
+
+
+\makeatother
+
+\begin{document}
+
+\drawboard{
+     o o o o o x o o o o o ,
+    o o o x o o o o o o x ,
+   o x o o o o o o x o o,
+    o o o o o x o o o o}
+\end{document}
